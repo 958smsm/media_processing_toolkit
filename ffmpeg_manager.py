@@ -280,6 +280,7 @@ class RawVideoWriter:
         preset: str = "medium",
         crf: int | None = None,
         threads: int = 0,
+        low_memory: bool = False,
         scale_filter: str | None = None,
         input_pixel_format: str = "bgr24",
         resize_frames: bool = False,
@@ -302,6 +303,7 @@ class RawVideoWriter:
         self.preset = preset
         self.crf = crf
         self.threads = int(threads)
+        self.low_memory = bool(low_memory)
         self.scale_filter = scale_filter
         self.input_pixel_format = input_pixel_format
         self.resize_frames = resize_frames
@@ -362,6 +364,25 @@ class RawVideoWriter:
                     f"{buffer_size}k",
                 ]
             )
+        if self.codec_family == "hevc":
+            x265_parameters = ["log-level=error"]
+            if self.threads > 0:
+                x265_parameters.extend(
+                    [
+                        f"pools={self.threads}",
+                        f"frame-threads={min(self.threads, 2)}",
+                    ]
+                )
+            if self.low_memory:
+                x265_parameters.extend(
+                    [
+                        "rc-lookahead=5",
+                        "bframes=2",
+                        "ref=2",
+                        "lookahead-slices=0",
+                    ]
+                )
+            command.extend(["-x265-params", ":".join(x265_parameters)])
         if self.threads > 0:
             command.extend(["-threads", str(self.threads)])
         command.extend(
@@ -549,6 +570,8 @@ class FFmpegPipeWriter(RawVideoWriter):
         preset: str = "medium",
         scale_filter: str | None = None,
         pix_fmt_in: str = "bgr24",
+        threads: int | None = None,
+        low_memory: bool = False,
         logger: Any = None,
         stderr_tail_lines: int = 300,
         echo_stderr: bool = False,
@@ -566,6 +589,8 @@ class FFmpegPipeWriter(RawVideoWriter):
             preset=preset,
             scale_filter=scale_filter,
             input_pixel_format=pix_fmt_in,
+            threads=threads or 0,
+            low_memory=low_memory,
             overwrite=overwrite,
             ffmpeg_binary=ffmpeg_binary,
             logger=logger,

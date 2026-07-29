@@ -78,6 +78,30 @@ class RawVideoWriterTests(unittest.TestCase):
         self.assertIn("900k", command)
         self.assertEqual(command[-1], "output.mp4")
 
+    def test_preserves_hevc_thread_and_low_memory_options(self) -> None:
+        writer = ffmpeg_manager.FFmpegPipeWriter(
+            "output.mp4",
+            640,
+            480,
+            25,
+            900,
+            threads=4,
+            low_memory=True,
+            overwrite=True,
+        )
+
+        command = writer.build_command()
+        parameters = command[command.index("-x265-params") + 1]
+
+        self.assertIn("pools=4", parameters)
+        self.assertIn("frame-threads=2", parameters)
+        self.assertIn("rc-lookahead=5", parameters)
+        self.assertIn("bframes=2", parameters)
+        self.assertIn("ref=2", parameters)
+        self.assertIn("lookahead-slices=0", parameters)
+        self.assertIn("-threads", command)
+        self.assertEqual(command[command.index("-threads") + 1], "4")
+
 
 if __name__ == "__main__":
     unittest.main()
