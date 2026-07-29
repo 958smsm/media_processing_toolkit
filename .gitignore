@@ -4,3 +4,8 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+logs/
+trash/
+yt_videos/
+*.ffmpeg.log
+*.partial.*
