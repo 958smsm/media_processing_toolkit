@@ -7,7 +7,10 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Sequence
 
-from toolkit_runtime import configure_logging, parse_yaml_args, progress_iter
+try:
+    from .toolkit_runtime import configure_logging, parse_yaml_args, progress_iter
+except ImportError:
+    from toolkit_runtime import configure_logging, parse_yaml_args, progress_iter
 
 HERE = Path(__file__).resolve()
 FEATURE_NAME = HERE.stem
