@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-processing-toolkit"
+version = "0.1.0"
+description = "Reusable tools for video, image, download, and similarity workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "Pillow>=10.0",
+  "PyYAML>=6.0",
+  "tqdm>=4.66",
+  "yt-dlp>=2025.1",
+]
+
+[project.scripts]
+media-bitrate = "ffmpeg_manager:main"
+media-compress = "video_compressor:main"
+media-convert = "image_video_converter:main"
+media-download = "youtube_download:main"
+image-cluster = "image_similarity.cli:main"
+video-dedupe = "image_similarity.dedupe_by_similarity:main"
+
+[tool.setuptools]
+py-modules = [
+  "ffmpeg_manager",
+  "image_video_converter",
+  "toolkit_runtime",
+  "video_compressor",
+  "youtube_download",
+]
+
+[tool.setuptools.packages.find]
+include = ["image_similarity*"]

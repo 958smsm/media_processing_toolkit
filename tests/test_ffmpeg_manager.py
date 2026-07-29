@@ -14,7 +14,6 @@ class BitrateTests(unittest.TestCase):
             "h264",
             "medium",
         )
-
         self.assertEqual(bitrate, 6221)
 
     def test_normalizes_codec_and_quality_aliases(self) -> None:
@@ -30,10 +29,10 @@ class BitrateTests(unittest.TestCase):
 
 
 class HardwareAccelerationTests(unittest.TestCase):
-    @patch.object(ffmpeg_manager._core, "cuda_works_for_file", return_value=True)
-    @patch.object(ffmpeg_manager._core, "nvidia_gpu_present", return_value=True)
+    @patch.object(ffmpeg_manager, "cuda_works_for_file", return_value=True)
+    @patch.object(ffmpeg_manager, "nvidia_gpu_present", return_value=True)
     @patch.object(
-        ffmpeg_manager._core,
+        ffmpeg_manager,
         "ffmpeg_supports_hwaccel",
         return_value=True,
     )
@@ -47,19 +46,17 @@ class HardwareAccelerationTests(unittest.TestCase):
             Path("video.mp4"),
             "auto",
         )
-
         self.assertEqual(arguments, ["-hwaccel", "cuda"])
 
     def test_cpu_mode_does_not_probe_hardware(self) -> None:
         with patch.object(
-            ffmpeg_manager._core,
+            ffmpeg_manager,
             "ffmpeg_supports_hwaccel",
         ) as probe:
             arguments = ffmpeg_manager.hardware_acceleration_args(
                 Path("video.mp4"),
                 "cpu",
             )
-
         self.assertEqual(arguments, [])
         probe.assert_not_called()
 
@@ -75,9 +72,7 @@ class RawVideoWriterTests(unittest.TestCase):
             codec_family="hevc",
             overwrite=True,
         )
-
         command = writer.build_command()
-
         self.assertIn("libx265", command)
         self.assertIn("hvc1", command)
         self.assertIn("900k", command)

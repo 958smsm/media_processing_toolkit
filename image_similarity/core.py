@@ -5,11 +5,19 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+if __package__ in {None, ""}:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from toolkit_runtime import progress_iter, resolve_files
 
 from .methods import DEFAULT_METHOD, SimilarityFunction, get_method
 
 SUPPORTED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".gif"})
+FeatureExtractor = Callable[[Path], Any]
 
 
 @dataclass(frozen=True)
@@ -38,49 +46,37 @@ class ClusterResult:
 
 
 def discover_images(source_dir: Path | str, recursive: bool = True) -> list[Path]:
-    """Find supported images in a directory in deterministic order."""
+    """Find supported images in deterministic natural order."""
 
-    source = Path(source_dir).expanduser()
-    if not source.exists():
-        raise FileNotFoundError(f"Source directory does not exist: {source}")
-    if not source.is_dir():
-        raise NotADirectoryError(f"Source path is not a directory: {source}")
-
-    candidates = source.rglob("*") if recursive else source.glob("*")
-    return sorted(
-        (
-            path
-            for path in candidates
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-        ),
-        key=lambda path: str(path).casefold(),
+    return resolve_files(
+        [source_dir],
+        extensions=SUPPORTED_EXTENSIONS,
+        recursive=recursive,
+        allow_text_lists=False,
     )
 
 
 def extract_features(
     image_paths: Iterable[Path],
-    extractor: Any,
+    extractor: FeatureExtractor,
     *,
     show_progress: bool = True,
     description: str = "Extracting image features",
 ) -> tuple[dict[Path, Any], list[ExtractionError]]:
     """Extract features while collecting per-file errors."""
 
-    paths = list(image_paths)
-    iterator: Iterable[Path] = paths
-    if show_progress:
-        from tqdm import tqdm
-
-        iterator = tqdm(paths, desc=description)
-
     features: dict[Path, Any] = {}
     errors: list[ExtractionError] = []
-    for image_path in iterator:
+    for image_path in progress_iter(
+        image_paths,
+        description,
+        enabled=show_progress,
+    ):
         try:
             features[image_path] = extractor(image_path)
         except ModuleNotFoundError:
             raise
-        except Exception as error:  # One bad image should not abort a batch.
+        except Exception as error:
             errors.append(ExtractionError(image_path, str(error)))
     return features, errors
 
@@ -90,12 +86,7 @@ def cluster_features(
     compare: SimilarityFunction,
     threshold: float,
 ) -> list[list[Path]]:
-    """Greedily group each unvisited image with matches to its seed image.
-
-    This intentionally retains the behavior of the original scripts: the first
-    unvisited image becomes a cluster seed, and each later image is compared
-    with that seed. Results are deterministic when ``features`` is ordered.
-    """
+    """Greedily group unvisited images against each cluster seed."""
 
     if not -1.0 <= threshold <= 1.0:
         raise ValueError("Similarity threshold must be between -1.0 and 1.0.")
@@ -103,7 +94,6 @@ def cluster_features(
     visited: set[Path] = set()
     clusters: list[list[Path]] = []
     image_paths = list(features)
-
     for seed_path in image_paths:
         if seed_path in visited:
             continue
@@ -111,7 +101,6 @@ def cluster_features(
         cluster = [seed_path]
         visited.add(seed_path)
         seed_feature = features[seed_path]
-
         for candidate_path in image_paths:
             if candidate_path in visited:
                 continue
@@ -119,9 +108,7 @@ def cluster_features(
             if similarity >= threshold:
                 cluster.append(candidate_path)
                 visited.add(candidate_path)
-
         clusters.append(cluster)
-
     return clusters
 
 
@@ -132,15 +119,20 @@ def export_clusters(
     *,
     move: bool = False,
     include_singletons: bool = True,
+    overwrite: bool = False,
 ) -> int:
     """Copy or move clustered images while preserving source subdirectories."""
 
     source = Path(source_dir).expanduser().resolve()
     output = Path(output_dir).expanduser().resolve()
-    operation = shutil.move if move else shutil.copy2
-    exported_count = 0
+    if output.exists() and any(output.iterdir()) and not overwrite:
+        raise FileExistsError(
+            f"Output directory is not empty; use overwrite to reuse it: {output}"
+        )
 
+    operation = shutil.move if move else shutil.copy2
     output.mkdir(parents=True, exist_ok=True)
+    exported_count = 0
     exported_cluster_index = 0
     for cluster in clusters:
         if len(cluster) == 1 and not include_singletons:
@@ -159,9 +151,10 @@ def export_clusters(
 
             destination = cluster_dir / relative_path
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists() and not overwrite:
+                raise FileExistsError(f"Destination already exists: {destination}")
             operation(resolved_image, destination)
             exported_count += 1
-
     return exported_count
 
 
@@ -174,6 +167,7 @@ def cluster_images(
     recursive: bool = True,
     move: bool = False,
     include_singletons: bool = True,
+    overwrite: bool = False,
     show_progress: bool = True,
 ) -> ClusterResult:
     """Discover, describe, cluster, and export images in one operation."""
@@ -205,13 +199,13 @@ def cluster_images(
         output,
         move=move,
         include_singletons=include_singletons,
+        overwrite=overwrite,
     )
     exported_cluster_count = sum(
         1
         for cluster in clusters
         if include_singletons or len(cluster) > 1
     )
-
     return ClusterResult(
         output_dir=output,
         discovered_count=len(image_paths),

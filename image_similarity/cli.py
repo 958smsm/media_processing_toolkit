@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-import argparse
-import sys
+import argparse, logging, sys
 from pathlib import Path
 from typing import Sequence
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from toolkit_runtime import configure_logging, parse_yaml_args
+
 from .core import cluster_images
 from .methods import DEFAULT_METHOD, METHODS
+
+HERE = Path(__file__).resolve()
+FEATURE_NAME = "image_similarity"
 
 
 def build_parser(
@@ -16,50 +23,65 @@ def build_parser(
     default_method: str = DEFAULT_METHOD,
     default_threshold: float | None = None,
 ) -> argparse.ArgumentParser:
+    """Build the image-clustering CLI parser."""
+
     parser = argparse.ArgumentParser(
         description="Group visually similar images into cluster directories."
     )
-    parser.add_argument("source", type=Path, help="Directory containing images.")
+    parser.add_argument(
+        "source",
+        nargs="?",
+        type=Path,
+        help="Directory containing images.",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        dest="input_source",
+        type=Path,
+        help="Directory containing images.",
+    )
     parser.add_argument(
         "-m",
         "--method",
         choices=sorted(METHODS),
         default=default_method,
-        help=f"Similarity method (default: {default_method}).",
     )
     parser.add_argument(
         "-t",
         "--threshold",
         type=float,
         default=default_threshold,
-        help="Similarity threshold; method-specific default when omitted.",
     )
+    parser.add_argument("-o", "--output", type=Path)
     parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="Output directory; defaults to a sibling of the source directory.",
-    )
-    parser.add_argument(
+        "-M",
         "--move",
-        action="store_true",
-        help="Move source files instead of copying them.",
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
-        "--no-recursive",
-        action="store_true",
-        help="Only inspect images directly inside the source directory.",
+        "-r",
+        "--recursive",
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
-        "--exclude-singletons",
-        action="store_true",
-        help="Do not export clusters containing only one image.",
+        "-S",
+        "--singletons",
+        action=argparse.BooleanOptionalAction,
+        dest="include_singletons",
     )
     parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Disable progress bars.",
+        "-w",
+        "--overwrite",
+        action=argparse.BooleanOptionalAction,
     )
+    parser.add_argument(
+        "-P",
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        dest="show_progress",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 
 
@@ -69,21 +91,38 @@ def main(
     default_method: str = DEFAULT_METHOD,
     default_threshold: float | None = None,
 ) -> int:
-    args = build_parser(
-        default_method=default_method,
-        default_threshold=default_threshold,
-    ).parse_args(argv)
+    """Run the image-clustering CLI."""
 
     try:
+        args, unknown_args, yaml_path = parse_yaml_args(
+            build_parser(
+                default_method=default_method,
+                default_threshold=default_threshold,
+            ),
+            HERE,
+            FEATURE_NAME,
+            argv,
+        )
+        log = configure_logging(HERE, FEATURE_NAME, verbose=bool(args.verbose))
+        log.debug("Loaded configuration from %s", yaml_path)
+        if unknown_args:
+            log.debug("Ignoring unknown arguments: %s", unknown_args)
+
+        source = args.input_source or args.source
+        if source is None:
+            raise ValueError(
+                "No source configured; use -i/--input or edit args.yaml."
+            )
         result = cluster_images(
-            args.source,
+            source,
             method_name=args.method,
             threshold=args.threshold,
             output_dir=args.output,
-            recursive=not args.no_recursive,
-            move=args.move,
-            include_singletons=not args.exclude_singletons,
-            show_progress=not args.quiet,
+            recursive=bool(args.recursive),
+            move=bool(args.move),
+            include_singletons=bool(args.include_singletons),
+            overwrite=bool(args.overwrite),
+            show_progress=bool(args.show_progress),
         )
     except ModuleNotFoundError as error:
         dependency = error.name or str(error)
@@ -93,20 +132,29 @@ def main(
             file=sys.stderr,
         )
         return 2
-    except (FileNotFoundError, NotADirectoryError, ValueError) as error:
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        NotADirectoryError,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
-    for error in result.errors:
-        print(
-            f"warning: could not process {error.image_path}: {error.message}",
-            file=sys.stderr,
+    for extraction_error in result.errors:
+        log.warning(
+            "Could not process %s: %s",
+            extraction_error.image_path,
+            extraction_error.message,
         )
-
-    print(
-        f"Found {result.cluster_count} clusters from "
-        f"{result.processed_count}/{result.discovered_count} images; exported "
-        f"{result.exported_cluster_count} clusters "
-        f"({result.exported_image_count} images) to {result.output_dir}"
+    log.info(
+        "Found %d clusters from %d/%d images; exported %d clusters "
+        "(%d images) to %s",
+        result.cluster_count,
+        result.processed_count,
+        result.discovered_count,
+        result.exported_cluster_count,
+        result.exported_image_count,
+        result.output_dir,
     )
     return 0

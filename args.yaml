@@ -52,6 +52,18 @@ image_video_converter:
   fail_fast: false
   verbose: false
 
+image_similarity:
+  source:
+  method: average-hash
+  threshold:
+  output:
+  move: false
+  recursive: true
+  include_singletons: true
+  overwrite: false
+  show_progress: true
+  verbose: false
+
 dedupe_by_similarity:
   inputs: []
   output_dir:

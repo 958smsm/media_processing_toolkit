@@ -7,7 +7,7 @@ import video_compressor
 
 
 class VideoInfoTests(unittest.TestCase):
-    @patch.object(video_compressor._core, "run_capture")
+    @patch.object(video_compressor, "run_capture")
     def test_parses_ffprobe_json(self, run_capture) -> None:
         run_capture.return_value = json.dumps(
             {
@@ -23,9 +23,7 @@ class VideoInfoTests(unittest.TestCase):
                 "format": {"duration": "12.5"},
             }
         )
-
         info = video_compressor.ffprobe_video_info("video.mp4")
-
         self.assertEqual((info.width, info.height), (1920, 1080))
         self.assertAlmostEqual(info.fps, 29.970, places=3)
         self.assertEqual(info.duration, 12.5)
@@ -38,7 +36,6 @@ class ScalingTests(unittest.TestCase):
             1080,
             721,
         )
-
         self.assertEqual(height, 720)
         self.assertEqual(width % 2, 0)
         self.assertEqual(scale_filter, f"scale={width}:{height}")
@@ -79,7 +76,6 @@ class CompressionTests(unittest.TestCase):
             source = root / "input.mp4"
             output = root / "output.mp4"
             source.write_bytes(b"source")
-
             info = video_compressor.VideoInfo(
                 width=1280,
                 height=720,
@@ -97,22 +93,22 @@ class CompressionTests(unittest.TestCase):
             )
             with (
                 patch.object(
-                    video_compressor._core,
+                    video_compressor,
                     "require_executable",
                     side_effect=lambda binary: binary,
                 ),
                 patch.object(
-                    video_compressor._core,
+                    video_compressor,
                     "ffprobe_video_info",
                     return_value=info,
                 ),
                 patch.object(
-                    video_compressor._core,
+                    video_compressor,
                     "hardware_acceleration_args",
                     return_value=[],
                 ),
                 patch.object(
-                    video_compressor._core,
+                    video_compressor,
                     "run_ffmpeg_with_progress",
                     side_effect=complete_command,
                 ),

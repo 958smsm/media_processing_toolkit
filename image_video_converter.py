@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import argparse, glob, logging, re, sys, time
+import argparse, logging, sys, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from toolkit_runtime import configure_logging, load_yaml_defaults, progress_iter
+from toolkit_runtime import (
+    ProgressBar, configure_logging, increment_path, natural_sort_key,
+    parse_yaml_args, partial_output_path, progress_iter, resolve_files,
+)
 from video_compressor import resolve_input_videos
 
 HERE = Path(__file__).resolve()
 FEATURE_NAME = HERE.stem
 LOGGER = logging.getLogger(FEATURE_NAME)
-
 IMAGE_EXTENSIONS = frozenset(
     {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 )
@@ -51,34 +53,17 @@ class VideoToImagesResult:
     elapsed_seconds: float
 
 
-def natural_sort_key(path: Path | str) -> tuple[Any, ...]:
-    """Sort paths naturally so frame 2 appears before frame 10."""
-
-    parts = re.split(r"(\d+)", str(path).casefold())
-    return tuple(int(part) if part.isdigit() else part for part in parts)
-
-
 def discover_images(input_value: Path | str) -> list[Path]:
     """Expand an image directory, file, or glob in natural order."""
 
-    raw = str(input_value).strip()
-    if glob.has_magic(raw):
-        candidates = [Path(match) for match in glob.glob(raw, recursive=True)]
-    else:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise FileNotFoundError(f"Image input does not exist: {path}")
-        candidates = list(path.iterdir()) if path.is_dir() else [path]
-
-    images = [
-        candidate.resolve()
-        for candidate in candidates
-        if candidate.is_file()
-        and candidate.suffix.lower() in IMAGE_EXTENSIONS
-    ]
+    images = resolve_files(
+        [input_value],
+        extensions=IMAGE_EXTENSIONS,
+        allow_text_lists=False,
+    )
     if not images:
         raise ValueError(f"No supported images found in {input_value}.")
-    return sorted(set(images), key=natural_sort_key)
+    return images
 
 
 def frame_to_timecode(frame_number: int, fps: float) -> str:
@@ -86,14 +71,10 @@ def frame_to_timecode(frame_number: int, fps: float) -> str:
 
     if frame_number < 0 or fps <= 0:
         raise ValueError("Frame number cannot be negative and FPS must be positive.")
-    total_seconds = frame_number / fps
-    hours = int(total_seconds // 3600)
-    minutes = int(total_seconds % 3600 // 60)
-    seconds = int(total_seconds % 60)
-    milliseconds = int(round(total_seconds % 1 * 1000))
-    if milliseconds == 1000:
-        seconds += 1
-        milliseconds = 0
+    total_milliseconds = round(frame_number / fps * 1000)
+    hours, remainder = divmod(total_milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
     return f"{hours:02}_{minutes:02}_{seconds:02}_{milliseconds:03}"
 
 
@@ -118,61 +99,6 @@ def sampling_frame_step(
             raise ValueError("Target FPS must be positive.")
         return max(1, round(source_fps / target_fps))
     return 1
-
-
-def increment_path(path: Path) -> Path:
-    """Return a non-existing path by appending an incrementing suffix."""
-
-    if not path.exists():
-        return path
-    for index in range(2, 10_000):
-        candidate = path.with_name(f"{path.name}_{index}")
-        if not candidate.exists():
-            return candidate
-    raise FileExistsError(f"Could not allocate a unique path near {path}.")
-
-
-class _FrameProgress:
-    def __init__(
-        self,
-        description: str,
-        *,
-        total: int | None,
-        enabled: bool,
-    ) -> None:
-        self._bar = None
-        self._count = 0
-        self._description = description
-        self._enabled = enabled
-        if enabled:
-            try:
-                from tqdm import tqdm
-
-                self._bar = tqdm(
-                    total=total,
-                    desc=description,
-                    unit="frame",
-                    dynamic_ncols=True,
-                )
-            except ModuleNotFoundError:
-                self._bar = None
-
-    def update(self) -> None:
-        self._count += 1
-        if self._bar:
-            self._bar.update(1)
-        elif self._enabled and self._count % 100 == 0:
-            print(
-                f"\r{self._description}: {self._count}",
-                end="",
-                flush=True,
-            )
-
-    def close(self) -> None:
-        if self._bar:
-            self._bar.close()
-        elif self._enabled and self._count >= 100:
-            print()
 
 
 def images_to_video(
@@ -209,11 +135,8 @@ def images_to_video(
     if first_frame is None:
         raise ValueError(f"Could not decode image: {images[0]}")
     height, width = first_frame.shape[:2]
-
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial_output = output.with_name(
-        f"{output.stem}.partial{output.suffix}"
-    )
+    partial_output = partial_output_path(output)
     writer = cv2.VideoWriter(
         str(partial_output),
         cv2.VideoWriter_fourcc(*selected_codec),
@@ -328,37 +251,46 @@ def video_to_images(
         requested_output if overwrite else increment_path(requested_output)
     )
     destination.mkdir(parents=True, exist_ok=True)
-    progress = _FrameProgress(
-        "Extracting frames",
-        total=total_frames if total_frames > 0 else None,
-        enabled=show_progress,
-    )
     started_at = time.monotonic()
     decoded_frames = 0
     saved_frames = 0
 
-    try:
-        while True:
-            success, frame = capture.read()
-            if not success:
-                break
-            frame_number = decoded_frames
-            decoded_frames += 1
-            if frame_number % frame_step == 0:
-                timecode = frame_to_timecode(frame_number, source_fps)
-                filename = (
-                    f"{source.stem}_{frame_number:09d}_{timecode}{extension}"
-                )
-                image_path = destination / filename
-                if image_path.exists() and not overwrite:
-                    raise FileExistsError(f"Image already exists: {image_path}")
-                if not cv2.imwrite(str(image_path), frame, write_parameters):
-                    raise RuntimeError(f"Could not write image: {image_path}")
-                saved_frames += 1
-            progress.update()
-    finally:
-        progress.close()
-        capture.release()
+    with ProgressBar(
+        "Extracting frames",
+        total=float(total_frames) if total_frames > 0 else None,
+        unit="frame",
+        enabled=show_progress,
+    ) as progress:
+        try:
+            while True:
+                success, frame = capture.read()
+                if not success:
+                    break
+                frame_number = decoded_frames
+                decoded_frames += 1
+                if frame_number % frame_step == 0:
+                    timecode = frame_to_timecode(frame_number, source_fps)
+                    filename = (
+                        f"{source.stem}_{frame_number:09d}_"
+                        f"{timecode}{extension}"
+                    )
+                    image_path = destination / filename
+                    if image_path.exists() and not overwrite:
+                        raise FileExistsError(
+                            f"Image already exists: {image_path}"
+                        )
+                    if not cv2.imwrite(
+                        str(image_path),
+                        frame,
+                        write_parameters,
+                    ):
+                        raise RuntimeError(
+                            f"Could not write image: {image_path}"
+                        )
+                    saved_frames += 1
+                progress.update()
+        finally:
+            capture.release()
 
     return VideoToImagesResult(
         input_path=source,
@@ -378,7 +310,9 @@ def _default_video_output(image_input: Path | str) -> Path:
     return path.parent / "images.mp4"
 
 
-def build_parser(defaults: dict | None = None) -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
+    """Build the bidirectional-converter CLI parser."""
+
     parser = argparse.ArgumentParser(
         description="Convert image sequences to video or video to images."
     )
@@ -393,12 +327,7 @@ def build_parser(defaults: dict | None = None) -> argparse.ArgumentParser:
         nargs="+",
         help="Image input or video files/directories/globs/TXT lists.",
     )
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="Output video or output directory.",
-    )
+    parser.add_argument("-o", "--output", type=Path)
     parser.add_argument(
         "-r",
         "--fps",
@@ -408,11 +337,7 @@ def build_parser(defaults: dict | None = None) -> argparse.ArgumentParser:
     parser.add_argument("-s", "--interval-seconds", type=float)
     parser.add_argument("-e", "--image-extension")
     parser.add_argument("-q", "--image-quality", type=int)
-    parser.add_argument(
-        "-c",
-        "--codec",
-        help="Four-character OpenCV codec; inferred from output by default.",
-    )
+    parser.add_argument("-c", "--codec")
     parser.add_argument(
         "-R",
         "--resize-frames",
@@ -435,25 +360,20 @@ def build_parser(defaults: dict | None = None) -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
     )
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.set_defaults(**(defaults or {}))
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the bidirectional-converter CLI."""
+
     try:
-        defaults, parse_arguments, yaml_path = load_yaml_defaults(
+        args, unknown_args, yaml_path = parse_yaml_args(
+            build_parser(),
             HERE,
             FEATURE_NAME,
             argv,
         )
-        args, unknown_args = build_parser(defaults).parse_known_args(
-            parse_arguments
-        )
-        log = configure_logging(
-            HERE,
-            FEATURE_NAME,
-            verbose=bool(args.verbose),
-        )
+        log = configure_logging(HERE, FEATURE_NAME, verbose=bool(args.verbose))
         log.debug("Loaded configuration from %s", yaml_path)
         if unknown_args:
             log.debug("Ignoring unknown arguments: %s", unknown_args)
@@ -474,7 +394,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         OSError,
         ValueError,
     ) as error:
-        logging.getLogger(FEATURE_NAME).error("%s", error)
         print(f"error: {error}", file=sys.stderr)
         return 2
 
