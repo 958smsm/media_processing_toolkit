@@ -367,27 +367,32 @@ class RawVideoWriter:
                     f"{buffer_size}k",
                 ]
             )
+        effective_threads = 1 if self.low_memory else self.threads
         if self.codec_family == "hevc":
             x265_parameters = ["log-level=error"]
-            if self.threads > 0:
-                x265_parameters.extend(
-                    [
-                        f"pools={self.threads}",
-                        f"frame-threads={min(self.threads, 2)}",
-                    ]
-                )
             if self.low_memory:
                 x265_parameters.extend(
                     [
-                        "rc-lookahead=5",
-                        "bframes=2",
-                        "ref=2",
-                        "lookahead-slices=0",
+                        "pools=none",
+                        "frame-threads=1",
+                        "wpp=0",
+                        "rc-lookahead=0",
+                        "bframes=0",
+                        "ref=1",
+                        "scenecut=0",
+                        "cutree=0",
+                    ]
+                )
+            elif effective_threads > 0:
+                x265_parameters.extend(
+                    [
+                        f"pools={effective_threads}",
+                        f"frame-threads={min(effective_threads, 2)}",
                     ]
                 )
             command.extend(["-x265-params", ":".join(x265_parameters)])
-        if self.threads > 0:
-            command.extend(["-threads", str(self.threads)])
+        if effective_threads > 0:
+            command.extend(["-threads", str(effective_threads)])
         command.extend(
             [
                 "-pix_fmt",
@@ -490,8 +495,22 @@ class RawVideoWriter:
             frame = cv2.resize(frame, (self.width, self.height))
 
         try:
-            self.process.stdin.write(frame.tobytes())
-        except (BrokenPipeError, OSError) as error:
+            # Avoid allocating a full-frame bytes object for every output
+            # frame. Raw subprocess pipes may also accept only part of a large
+            # frame, so keep writing the remaining zero-copy buffer view.
+            try:
+                remaining = memoryview(frame).cast("B")
+            except TypeError:
+                # Strided arrays cannot be cast to a flat byte view.
+                remaining = memoryview(frame.tobytes())
+            while remaining:
+                written = self.process.stdin.write(remaining)
+                if written is None or written <= 0:
+                    raise BrokenPipeError(
+                        "FFmpeg stdin accepted no frame data."
+                    )
+                remaining = remaining[written:]
+        except (BrokenPipeError, OSError, ValueError) as error:
             raise FFmpegError(
                 self._failure_message("FFmpeg closed its input pipe")
             ) from error

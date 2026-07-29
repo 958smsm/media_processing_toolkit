@@ -2,6 +2,8 @@ from pathlib import Path
 from unittest.mock import patch
 import unittest
 
+import numpy as np
+
 import ffmpeg_manager
 
 
@@ -93,14 +95,57 @@ class RawVideoWriterTests(unittest.TestCase):
         command = writer.build_command()
         parameters = command[command.index("-x265-params") + 1]
 
-        self.assertIn("pools=4", parameters)
-        self.assertIn("frame-threads=2", parameters)
-        self.assertIn("rc-lookahead=5", parameters)
-        self.assertIn("bframes=2", parameters)
-        self.assertIn("ref=2", parameters)
-        self.assertIn("lookahead-slices=0", parameters)
+        self.assertIn("pools=none", parameters)
+        self.assertIn("frame-threads=1", parameters)
+        self.assertIn("wpp=0", parameters)
+        self.assertIn("rc-lookahead=0", parameters)
+        self.assertIn("bframes=0", parameters)
+        self.assertIn("ref=1", parameters)
+        self.assertIn("scenecut=0", parameters)
+        self.assertIn("cutree=0", parameters)
         self.assertIn("-threads", command)
-        self.assertEqual(command[command.index("-threads") + 1], "4")
+        self.assertEqual(command[command.index("-threads") + 1], "1")
+
+    def test_writes_full_frame_with_zero_copy_partial_writes(self) -> None:
+        class PartialStdin:
+            def __init__(self) -> None:
+                self.data = bytearray()
+                self.input_types = []
+
+            def write(self, chunk) -> int:
+                self.input_types.append(type(chunk))
+                count = min(7, len(chunk))
+                self.data.extend(chunk[:count])
+                return count
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.stdin = PartialStdin()
+
+            @staticmethod
+            def poll():
+                return None
+
+        writer = ffmpeg_manager.RawVideoWriter(
+            "output.mp4",
+            4,
+            2,
+            25,
+            250,
+        )
+        writer.process = FakeProcess()
+        frame = np.arange(24, dtype=np.uint8).reshape(2, 4, 3)
+
+        writer.write(frame)
+
+        self.assertEqual(writer.process.stdin.data, frame.tobytes())
+        self.assertGreater(len(writer.process.stdin.input_types), 1)
+        self.assertTrue(
+            all(
+                input_type is memoryview
+                for input_type in writer.process.stdin.input_types
+            )
+        )
 
 
 if __name__ == "__main__":
