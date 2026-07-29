@@ -37,6 +37,21 @@ youtube_download:
   show_progress: true
   verbose: false
 
+image_video_converter:
+  mode: video-to-images
+  inputs: []
+  output:
+  fps: 1
+  interval_seconds:
+  image_extension: jpg
+  image_quality: 95
+  codec:
+  resize_frames: false
+  overwrite: false
+  show_progress: true
+  fail_fast: false
+  verbose: false
+
 dedupe_by_similarity:
   inputs: []
   output_dir:

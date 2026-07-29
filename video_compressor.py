@@ -6,7 +6,7 @@ import argparse, logging, sys
 from pathlib import Path
 from typing import Sequence
 
-import _shrink_vid_advanced_core as _core
+import _video_compressor_core as _core
 from toolkit_runtime import configure_logging, load_yaml_defaults, progress_iter
 
 HERE = Path(__file__).resolve()

@@ -1,11 +1,9 @@
 # Media Processing Toolkit
 
-Practical Python tools for image similarity, FFmpeg-based video processing, and
-yt-dlp downloads.
+Practical Python tools for image similarity, FFmpeg-based video processing,
+image/video conversion, and yt-dlp downloads.
 
 ## Installation
-
-Install Python dependencies:
 
 ```powershell
 pip install -r requirements.txt
@@ -15,7 +13,7 @@ Video tools also require `ffmpeg` and `ffprobe` on `PATH`.
 
 ## Configuration and execution
 
-The executable tools support the same three modes:
+Executable tools support three modes:
 
 ```powershell
 # Load the tool's section from args.yaml
@@ -33,26 +31,24 @@ Configuration sections are named after their scripts:
 - `ffmpeg_manager`
 - `video_compressor`
 - `youtube_download`
+- `image_video_converter`
 - `dedupe_by_similarity`
 
-Every parser uses `parse_known_args()`, so host applications may pass additional
-arguments. Run a script with `--help` to see its short and long options.
+Every parser uses `parse_known_args()`. Run a script with `--help` to see its
+short and long options.
 
 ## Logging and progress
 
-Each executable writes debug, info, and error messages under:
+Each executable writes debug, info, and error messages to:
 
 ```text
 logs/<script-name>/log_1.txt
 ```
 
-Log files rotate through `log_5.txt`, with at most 3,000 lines in each file.
-Batch and media operations display progress bars; they can be disabled with
-`--no-progress` where appropriate.
+Logs rotate through `log_5.txt`, with at most 3,000 lines in each file. Batch
+and media operations display progress bars.
 
 ## Compress videos
-
-Compress individual videos, folders, globs, or TXT file lists:
 
 ```powershell
 python video_compressor.py -i video.mp4 -c h264 -q medium
@@ -63,6 +59,24 @@ python video_compressor.py -i "*.mp4" -2 --hw auto
 Completed encodes are published atomically, so failed jobs do not replace an
 existing destination.
 
+## Convert images and videos
+
+Create a video from a naturally ordered image sequence:
+
+```powershell
+python image_video_converter.py -m images-to-video -i D:\frames -o movie.mp4 -r 25
+```
+
+Extract one image per second from one or more videos:
+
+```powershell
+python image_video_converter.py -m video-to-images -i video.mp4 -o D:\frames -s 1
+```
+
+Use `-r/--fps` as the output video FPS in `images-to-video` mode or as the
+target extraction FPS in `video-to-images` mode. Use `-s/--interval-seconds`
+instead when extraction should follow a time interval.
+
 ## Remove similar video frames
 
 `image_similarity/dedupe_by_similarity.py` compares each frame with the last
@@ -70,7 +84,6 @@ kept frame and encodes retained frames as HEVC:
 
 ```powershell
 python image_similarity\dedupe_by_similarity.py -i video.mp4 -t 0.95 -p 8
-python image_similarity\dedupe_by_similarity.py -i D:\videos -H 1080 -q medium
 ```
 
 Moving source files to trash is disabled by default. Enable it explicitly with
@@ -96,15 +109,7 @@ with RawVideoWriter(
     writer.write(frame)
 ```
 
-Run the module directly to estimate a bitrate:
-
-```powershell
-python ffmpeg_manager.py -W 1920 -H 1080 -r 30 -c hevc -q medium
-```
-
 ## Download videos
-
-Download direct URLs or load URLs from TXT/YAML files:
 
 ```powershell
 python youtube_download.py -i "https://www.youtube.com/watch?v=..."
