@@ -38,10 +38,16 @@ _CODEC_ENCODERS = {
 }
 
 _BITS_PER_PIXEL = {
-    "h264": {"low": 0.040, "medium": 0.065, "high": 0.100},
-    "hevc": {"low": 0.027, "medium": 0.045, "high": 0.072},
-    "av1": {"low": 0.022, "medium": 0.037, "high": 0.060},
+    "h264": {"low": 0.07, "medium": 0.1, "high": 0.200},
+    "hevc": {"low": 0.05, "medium": 0.07, "high": 0.14},
+    "av1": {"low": 0.04, "medium": 0.06, "high": 0.12},
 }
+
+# _BITS_PER_PIXEL = {
+#     "h264": {"low": 0.040, "medium": 0.065, "high": 0.100},
+#     "hevc": {"low": 0.027, "medium": 0.045, "high": 0.072},
+#     "av1": {"low": 0.022, "medium": 0.037, "high": 0.060},
+# }
 
 _AV1_PRESETS = {
     "ultrafast": "12",
